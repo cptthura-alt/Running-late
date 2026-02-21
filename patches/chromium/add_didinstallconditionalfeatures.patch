@@ -1,0 +1,137 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Jeremy Apthorp <nornagon@nornagon.net>
+Date: Wed, 15 Jan 2020 16:35:18 -0800
+Subject: add DidInstallConditionalFeatures
+
+This adds a hook on script context creation _after conditional features
+have been installed_. Electron uses this to run preload scripts and
+various other initialization. This is necessary because at the time
+DidCreateScriptContext is called, not all JS APIs are available in the
+context, which can cause some preload scripts to trip.
+
+diff --git a/content/public/renderer/render_frame_observer.h b/content/public/renderer/render_frame_observer.h
+index 5196f155cdc641b66c4faa77d8b00097145a1290..bbfac47a74f989482343c222b78f187b70297e4e 100644
+--- a/content/public/renderer/render_frame_observer.h
++++ b/content/public/renderer/render_frame_observer.h
+@@ -141,6 +141,8 @@ class CONTENT_EXPORT RenderFrameObserver {
+   virtual void DidHandleOnloadEvents() {}
+   virtual void DidCreateScriptContext(v8::Local<v8::Context> context,
+                                       int32_t world_id) {}
++  virtual void DidInstallConditionalFeatures(v8::Local<v8::Context> context,
++                                             int32_t world_id) {}
+   virtual void WillReleaseScriptContext(v8::Local<v8::Context> context,
+                                         int32_t world_id) {}
+   virtual void DidClearWindowObject() {}
+diff --git a/content/renderer/render_frame_impl.cc b/content/renderer/render_frame_impl.cc
+index 30c2972e1fbc21d382304897c542ecd7fa95b896..3f512dcaec9f1d8a1375277ab8c6649d69070a33 100644
+--- a/content/renderer/render_frame_impl.cc
++++ b/content/renderer/render_frame_impl.cc
+@@ -4665,6 +4665,12 @@ void RenderFrameImpl::DidCreateScriptContext(v8::Local<v8::Context> context,
+     observer.DidCreateScriptContext(context, world_id);
+ }
+ 
++void RenderFrameImpl::DidInstallConditionalFeatures(
++    v8::Local<v8::Context> context, int world_id) {
++  for (auto& observer : observers_)
++    observer.DidInstallConditionalFeatures(context, world_id);
++}
++
+ void RenderFrameImpl::WillReleaseScriptContext(v8::Local<v8::Context> context,
+                                                int world_id) {
+   for (auto& observer : observers_)
+diff --git a/content/renderer/render_frame_impl.h b/content/renderer/render_frame_impl.h
+index c3c45d6a953d7c068c0d6c8bfb6855cd4403aa6d..b3fd71b237c134853f796a1d8d803e4d28519d53 100644
+--- a/content/renderer/render_frame_impl.h
++++ b/content/renderer/render_frame_impl.h
+@@ -602,6 +602,8 @@ class CONTENT_EXPORT RenderFrameImpl
+   void DidObserveLayoutShift(double score, bool after_input_or_scroll) override;
+   void DidCreateScriptContext(v8::Local<v8::Context> context,
+                               int world_id) override;
++  void DidInstallConditionalFeatures(v8::Local<v8::Context> context,
++                                     int world_id) override;
+   void WillReleaseScriptContext(v8::Local<v8::Context> context,
+                                 int world_id) override;
+   void DidChangeScrollOffset() override;
+diff --git a/third_party/blink/public/web/web_local_frame_client.h b/third_party/blink/public/web/web_local_frame_client.h
+index 5c1d0c1581b7ef6214f3dde6a4053a23c8673b74..4520c9edccf63bdb9e35bf3a99a8ddb39170da24 100644
+--- a/third_party/blink/public/web/web_local_frame_client.h
++++ b/third_party/blink/public/web/web_local_frame_client.h
+@@ -667,6 +667,9 @@ class BLINK_EXPORT WebLocalFrameClient {
+   virtual void DidCreateScriptContext(v8::Local<v8::Context>,
+                                       int32_t world_id) {}
+ 
++  virtual void DidInstallConditionalFeatures(v8::Local<v8::Context>,
++                                             int32_t world_id) {}
++
+   // WebKit is about to release its reference to a v8 context for a frame.
+   virtual void WillReleaseScriptContext(v8::Local<v8::Context>,
+                                         int32_t world_id) {}
+diff --git a/third_party/blink/renderer/bindings/core/v8/local_window_proxy.cc b/third_party/blink/renderer/bindings/core/v8/local_window_proxy.cc
+index 3ce1ef340780075951fb8c1b65f2ec90569f34ef..898d7caac98727210ac5780b576526a71ec5a5aa 100644
+--- a/third_party/blink/renderer/bindings/core/v8/local_window_proxy.cc
++++ b/third_party/blink/renderer/bindings/core/v8/local_window_proxy.cc
+@@ -217,6 +217,7 @@ void LocalWindowProxy::Initialize() {
+   }
+ 
+   InstallConditionalFeatures();
++  GetFrame()->Client()->DidInstallConditionalFeatures(context, world_->GetWorldId());
+ 
+   if (World().IsMainWorld()) {
+     probe::DidCreateMainWorldContext(GetFrame());
+diff --git a/third_party/blink/renderer/core/frame/local_frame_client.h b/third_party/blink/renderer/core/frame/local_frame_client.h
+index 36baf908d3be8aed44ff60b8de2cffe2eee15efe..8d73ddb12013ce195026b9f63050cf33f0bfb0fd 100644
+--- a/third_party/blink/renderer/core/frame/local_frame_client.h
++++ b/third_party/blink/renderer/core/frame/local_frame_client.h
+@@ -301,6 +301,8 @@ class CORE_EXPORT LocalFrameClient : public FrameClient {
+ 
+   virtual void DidCreateScriptContext(v8::Local<v8::Context>,
+                                       int32_t world_id) = 0;
++  virtual void DidInstallConditionalFeatures(v8::Local<v8::Context>,
++                                             int32_t world_id) = 0;
+   virtual void WillReleaseScriptContext(v8::Local<v8::Context>,
+                                         int32_t world_id) = 0;
+   virtual bool AllowScriptExtensions() = 0;
+diff --git a/third_party/blink/renderer/core/frame/local_frame_client_impl.cc b/third_party/blink/renderer/core/frame/local_frame_client_impl.cc
+index 019445e625257f909875adffdc5e967fb65a3728..11475d1a22054a884f2f1e7e5c933e9ae8d3379f 100644
+--- a/third_party/blink/renderer/core/frame/local_frame_client_impl.cc
++++ b/third_party/blink/renderer/core/frame/local_frame_client_impl.cc
+@@ -300,6 +300,13 @@ void LocalFrameClientImpl::DidCreateScriptContext(
+   }
+ }
+ 
++void LocalFrameClientImpl::DidInstallConditionalFeatures(
++    v8::Local<v8::Context> context,
++    int32_t world_id) {
++  if (web_frame_->Client())
++    web_frame_->Client()->DidInstallConditionalFeatures(context, world_id);
++}
++
+ void LocalFrameClientImpl::WillReleaseScriptContext(
+     v8::Local<v8::Context> context,
+     int32_t world_id) {
+diff --git a/third_party/blink/renderer/core/frame/local_frame_client_impl.h b/third_party/blink/renderer/core/frame/local_frame_client_impl.h
+index fcc0928abbc454281b022e0451d993651ecba42f..16066fe34ee0335a0dabe00b6890e5844349c0b5 100644
+--- a/third_party/blink/renderer/core/frame/local_frame_client_impl.h
++++ b/third_party/blink/renderer/core/frame/local_frame_client_impl.h
+@@ -81,6 +81,8 @@ class CORE_EXPORT LocalFrameClientImpl final : public LocalFrameClient {
+ 
+   void DidCreateScriptContext(v8::Local<v8::Context>,
+                               int32_t world_id) override;
++  void DidInstallConditionalFeatures(v8::Local<v8::Context>,
++                                     int32_t world_id) override;
+   void WillReleaseScriptContext(v8::Local<v8::Context>,
+                                 int32_t world_id) override;
+ 
+diff --git a/third_party/blink/renderer/core/loader/empty_clients.h b/third_party/blink/renderer/core/loader/empty_clients.h
+index 9ec4431ed035543beb78a3311049886c6d8e03f8..d46f3b764f653c990e57fb2c67121c8fd6b1b115 100644
+--- a/third_party/blink/renderer/core/loader/empty_clients.h
++++ b/third_party/blink/renderer/core/loader/empty_clients.h
+@@ -424,6 +424,8 @@ class CORE_EXPORT EmptyLocalFrameClient : public LocalFrameClient {
+ 
+   void DidCreateScriptContext(v8::Local<v8::Context>,
+                               int32_t world_id) override {}
++  void DidInstallConditionalFeatures(v8::Local<v8::Context>,
++                                     int32_t world_id) override {}
+   void WillReleaseScriptContext(v8::Local<v8::Context>,
+                                 int32_t world_id) override {}
+   bool AllowScriptExtensions() override { return false; }
