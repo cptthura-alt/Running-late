@@ -37,7 +37,7 @@
     "folder-hash": "^4.1.1",
     "got": "^11.8.5",
     "husky": "^9.1.7",
-    "lint-staged": "^16.1.0",
+    "lint-staged": "^16.2.7",
     "markdownlint-cli2": "^0.18.0",
     "minimist": "^1.2.8",
     "null-loader": "^4.0.1",
