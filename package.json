@@ -38,7 +38,7 @@
     "got": "^11.8.5",
     "husky": "^9.1.7",
     "lint-staged": "^16.2.7",
-    "markdownlint-cli2": "^0.18.0",
+    "markdownlint-cli2": "^0.21.0",
     "minimist": "^1.2.8",
     "null-loader": "^4.0.1",
     "pre-flight": "^2.0.0",
